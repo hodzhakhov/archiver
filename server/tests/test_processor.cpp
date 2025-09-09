@@ -77,8 +77,7 @@ TEST_F(ArchiveProcessorTest, CompressZipArchive) {
     EXPECT_EQ(processor.getOperation(), ArchiveOperation::COMPRESS);
     EXPECT_EQ(processor.getFormat(), CompressionFormat::ZIP);
     EXPECT_EQ(processor.getInputFilesCount(), 3);
-    EXPECT_GT(processor.getOutputSize(), 0);
-    EXPECT_NE(processor.getCompressionRatio(), 0.0);
+    EXPECT_GT(processor.getArchiveData().size(), 0);
     
     const auto& archive_data = processor.getArchiveData();
     EXPECT_FALSE(archive_data.empty());
@@ -96,8 +95,7 @@ TEST_F(ArchiveProcessorTest, CompressTarGzArchive) {
     processor.process();
     
     EXPECT_EQ(processor.getFormat(), CompressionFormat::TAR_GZ);
-    EXPECT_GT(processor.getOutputSize(), 0);
-    EXPECT_NE(processor.getCompressionRatio(), 0.0);
+    EXPECT_GT(processor.getArchiveData().size(), 0);
 }
 
 TEST_F(ArchiveProcessorTest, ExtractArchive) {
@@ -230,4 +228,3 @@ TEST_F(ArchiveProcessorTest, DirectoryStructure) {
     
     EXPECT_EQ(expected_names, actual_names);
 }
-

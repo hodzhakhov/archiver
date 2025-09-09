@@ -15,6 +15,7 @@
 #include <QStandardPaths>
 #include <QApplication>
 #include <QDirIterator>
+#include <QRegularExpression>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent), networkThread(new QThread(this)), worker(new NetworkWorker()), 
@@ -23,6 +24,7 @@ MainWindow::MainWindow(QWidget *parent)
     connect(networkThread, &QThread::finished, worker, &QObject::deleteLater);
     connect(this, &MainWindow::destroyed, networkThread, &QThread::quit);
     connect(this, &MainWindow::sendNetworkRequest, worker, &NetworkWorker::processRequest);
+    connect(this, &MainWindow::sendMultipartRequest, worker, &NetworkWorker::processMultipartRequest);
     connect(this, &MainWindow::cancelNetworkRequest, worker, &NetworkWorker::cancelRequest);
     connect(worker, &NetworkWorker::dataReceived, this, &MainWindow::onDataReceived);
     connect(worker, &NetworkWorker::finished, this, &MainWindow::onRequestFinished);
@@ -186,53 +188,63 @@ void MainWindow::setupExtractTab() {
     layout->addLayout(extractButtonLayout);
 }
 
-QJsonObject MainWindow::createCompressJsonBody() const {
-    QJsonObject json;
-    json["operation"] = "compress";
-    json["format"] = formatComboBox->currentText();
-    json["archive_name"] = archiveNameEdit->text();
-
-    QJsonArray files;
+QHttpMultiPart* MainWindow::createCompressMultipart() const {
+    QHttpMultiPart *multipart = new QHttpMultiPart(QHttpMultiPart::FormDataType);
+    
+    QHttpPart operationPart;
+    operationPart.setHeader(QNetworkRequest::ContentDispositionHeader, 
+                           QVariant("form-data; name=\"operation\""));
+    operationPart.setBody("compress");
+    multipart->append(operationPart);
+    
+    QHttpPart formatPart;
+    formatPart.setHeader(QNetworkRequest::ContentDispositionHeader, 
+                        QVariant("form-data; name=\"format\""));
+    formatPart.setBody(formatComboBox->currentText().toUtf8());
+    multipart->append(formatPart);
+    
+    QHttpPart archiveNamePart;
+    archiveNamePart.setHeader(QNetworkRequest::ContentDispositionHeader, 
+                             QVariant("form-data; name=\"archive_name\""));
+    archiveNamePart.setBody(archiveNameEdit->text().toUtf8());
+    multipart->append(archiveNamePart);
+    
     for (int i = 0; i < filesList->count(); ++i) {
         QListWidgetItem *item = filesList->item(i);
         QString filePath = item->data(Qt::UserRole).toString();
-        
-        QJsonObject file;
         QFileInfo fileInfo(filePath);
         
         if (fileInfo.isFile()) {
-            file["name"] = item->text();
-            file["content"] = encodeFileToBase64(filePath);
-            files.append(file);
+            QFile file(filePath);
+            if (file.open(QIODevice::ReadOnly)) {
+                QByteArray fileData = file.readAll();
+                file.close();
+                
+                QHttpPart filePart;
+                filePart.setHeader(QNetworkRequest::ContentDispositionHeader, 
+                                  QVariant(QString("form-data; name=\"file\"; filename=\"%1\"")
+                                          .arg(item->text())));
+                filePart.setHeader(QNetworkRequest::ContentTypeHeader, 
+                                  QVariant("application/octet-stream"));
+                
+                filePart.setBody(fileData);
+                multipart->append(filePart);
+            }
         }
     }
-    json["files"] = files;
-
-    return json;
+    
+    return multipart;
 }
 
-QJsonObject MainWindow::createExtractJsonBody() const {
-    QJsonObject json;
-    json["operation"] = "extract";
-    
+QByteArray MainWindow::createExtractData() const {
     QString archiveFile = archiveFileEdit->text();
-    QFileInfo fileInfo(archiveFile);
-    QString extension = fileInfo.suffix().toLower();
+    QFile file(archiveFile);
     
-    QString format = "zip";
-    if (extension == "zip") format = "zip";
-    else if (archiveFile.endsWith(".tar.gz")) format = "tar.gz";
-    else if (archiveFile.endsWith(".tar.bz2")) format = "tar.bz2";
-    else if (extension == "7z") format = "7z";
-    
-    json["format"] = format;
-    json["archive_data"] = encodeFileToBase64(archiveFile);
-    
-    if (!extractPathEdit->text().isEmpty()) {
-        json["extract_path"] = extractPathEdit->text();
+    if (!file.open(QIODevice::ReadOnly)) {
+        return QByteArray();
     }
-
-    return json;
+    
+    return file.readAll();
 }
 
 void MainWindow::browseFiles() {
@@ -305,16 +317,12 @@ void MainWindow::sendCompressRequest() {
         return;
     }
 
-    QJsonObject json = createCompressJsonBody();
-    QJsonDocument doc(json);
-    QByteArray jsonData = doc.toJson();
-
-    QNetworkRequest request(QUrl("http://localhost:8080/archive"));
-    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+    QHttpMultiPart *multipart = createCompressMultipart();
+    QNetworkRequest request(QUrl("http://localhost:8080/archive/compress"));
 
     responseData.clear();
     requestSuccessful = false;
-    emit sendNetworkRequest(request, jsonData);
+    emit sendMultipartRequest(request, multipart);
 
     compressButton->setText("Создание архива...");
     compressButton->setEnabled(false);
@@ -326,23 +334,25 @@ void MainWindow::sendCompressRequest() {
 void MainWindow::sendExtractRequest() {
     if (archiveFileEdit->text().isEmpty()) {
         showWarning("Ошибка ввода", "Выберите архивный файл.");
-            return;
-        }
+        return;
+    }
     if (!QFile::exists(archiveFileEdit->text())) {
         showWarning("Ошибка ввода", "Архивный файл не существует.");
         return;
     }
 
-    QJsonObject json = createExtractJsonBody();
-    QJsonDocument doc(json);
-    QByteArray jsonData = doc.toJson();
+    QByteArray archiveData = createExtractData();
+    if (archiveData.isEmpty()) {
+        showWarning("Ошибка файла", "Не удалось прочитать архивный файл.");
+        return;
+    }
 
-    QNetworkRequest request(QUrl("http://localhost:8080/archive"));
-    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+    QNetworkRequest request(QUrl("http://localhost:8080/archive/extract"));
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/octet-stream");
 
     responseData.clear();
     requestSuccessful = false;
-    emit sendNetworkRequest(request, jsonData);
+    emit sendNetworkRequest(request, archiveData);
 
     extractButton->setText("Извлечение...");
     extractButton->setEnabled(false);
@@ -409,28 +419,9 @@ void MainWindow::onRequestFinished() {
             }
         }
     } else {
-        try {
-            QJsonDocument doc = QJsonDocument::fromJson(responseData);
-            QJsonObject obj = doc.object();
-            
-            if (obj["success"].toBool()) {
-                int filesCount = obj["extracted_files_count"].toInt();
-                QString extractPath = extractPathEdit->text();
-                if (extractPath.isEmpty()) {
-                    extractPath = "папку по умолчанию";
-                }
-                
-                QString message = QString("Архив успешно извлечен!\n\nФайлов: %1\nПуть: %2")
-                    .arg(filesCount)
-                    .arg(extractPath);
-                
-                showInformation("Успех", message);
-    } else {
-                showCritical("Ошибка", "Не удалось извлечь архив.");
-            }
-        } catch (...) {
-            showCritical("Ошибка", "Неверный ответ сервера.");
-        }
+        QString boundary = "----CustomBoundary";
+        
+        handleMultipartExtractResponse(responseData, boundary);
     }
 
     responseData.clear();
@@ -485,12 +476,79 @@ void MainWindow::onFormatsReceived(const QByteArray &data) {
     }
 }
 
-QString MainWindow::encodeFileToBase64(const QString& filePath) const {
-    QFile file(filePath);
-    if (!file.open(QIODevice::ReadOnly)) {
-        return QString();
+void MainWindow::handleMultipartExtractResponse(const QByteArray &data, const QString &boundary) {
+    QList<ExtractedFile> files = parseMultipartData(data, boundary);
+    
+    if (files.isEmpty()) {
+        showCritical("Ошибка", "Не удалось извлечь файлы из архива.");
+        return;
     }
     
-    QByteArray fileData = file.readAll();
-    return fileData.toBase64();
+    QString extractPath = extractPathEdit->text();
+    if (extractPath.isEmpty()) {
+        extractPath = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
+    }
+    
+    QDir().mkpath(extractPath);
+    
+    int savedCount = 0;
+    for (const auto& file : files) {
+        QString fullPath = QDir(extractPath).filePath(file.filename);
+        
+        QFileInfo fileInfo(fullPath);
+        QDir().mkpath(fileInfo.absolutePath());
+        
+        QFile outputFile(fullPath);
+        if (outputFile.open(QIODevice::WriteOnly)) {
+            outputFile.write(file.data);
+            outputFile.close();
+            savedCount++;
+        }
+    }
+    
+    if (savedCount > 0) {
+        showInformation("Успех", QString("Извлечено %1 файлов в %2")
+                       .arg(savedCount).arg(extractPath));
+    } else {
+        showCritical("Ошибка", "Не удалось сохранить файлы.");
+    }
+}
+
+QList<ExtractedFile> MainWindow::parseMultipartData(const QByteArray &data, const QString &boundary) {
+    QList<ExtractedFile> files;
+    
+    QString dataStr = QString::fromUtf8(data);
+    QString delimiter = "--" + boundary;
+    
+    QStringList parts = dataStr.split(delimiter, Qt::SkipEmptyParts);
+    
+    for (const QString& part : parts) {
+        if (part.trimmed().isEmpty() || part.trimmed() == "--") {
+            continue;
+        }
+        
+        int headerEnd = part.indexOf("\r\n\r\n");
+        if (headerEnd == -1) {
+            continue;
+        }
+        
+        QString headers = part.left(headerEnd);
+        QByteArray content = part.mid(headerEnd + 4).toUtf8();
+        
+        if (content.endsWith("\r\n")) {
+            content.chop(2);
+        }
+        
+        QRegularExpression filenameRegex("filename=\"([^\"]+)\"");
+        QRegularExpressionMatch match = filenameRegex.match(headers);
+        
+        if (match.hasMatch()) {
+            ExtractedFile file;
+            file.filename = match.captured(1);
+            file.data = content;
+            files.append(file);
+        }
+    }
+    
+    return files;
 }

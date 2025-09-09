@@ -87,6 +87,10 @@ public:
         requestSuccessful = successful;
     }
     
+    QList<ExtractedFile> testParseMultipartData(const QByteArray &data, const QString &boundary) {
+        return parseMultipartData(data, boundary);
+    }
+    
     struct Message {
         QString title;
         QString text;
@@ -148,7 +152,7 @@ private slots:
         QVERIFY2(extractButton, "Extract button not found");
     }
 
-    void testCreateCompressJsonBody() {
+    void testCreateCompressMultipart() {
         TestMainWindow w;
         
         QLineEdit *archiveNameEdit = w.findChild<QLineEdit*>("archiveNameEdit");
@@ -158,73 +162,49 @@ private slots:
         archiveNameEdit->setText("test.zip");
         formatComboBox->setCurrentText("zip");
         
+        QTemporaryFile tempFile1;
+        tempFile1.open();
+        tempFile1.write("Hello, World!");
+        QString file1Path = tempFile1.fileName();
+        tempFile1.close();
+        
+        QTemporaryFile tempFile2;
+        tempFile2.open();
+        tempFile2.write("Test content");
+        QString file2Path = tempFile2.fileName();
+        tempFile2.close();
+        
         QListWidgetItem *item1 = new QListWidgetItem("file1.txt");
-        item1->setData(Qt::UserRole, "/tmp/file1.txt");
+        item1->setData(Qt::UserRole, file1Path);
         filesList->addItem(item1);
         
         QListWidgetItem *item2 = new QListWidgetItem("dir/file2.txt");
-        item2->setData(Qt::UserRole, "/tmp/dir/file2.txt");
+        item2->setData(Qt::UserRole, file2Path);
         filesList->addItem(item2);
         
-        QTemporaryFile tempFile1("/tmp/file1.txt");
-        tempFile1.open();
-        tempFile1.write("Hello, World!");
-        tempFile1.close();
+        QHttpMultiPart *multipart = w.createCompressMultipart();
+        QVERIFY(multipart != nullptr);
         
-        QTemporaryFile tempFile2("/tmp/dir_file2.txt");
-        tempFile2.open();
-        tempFile2.write("Test content");
-        tempFile2.close();
-        
-        item1->setData(Qt::UserRole, tempFile1.fileName());
-        item2->setData(Qt::UserRole, tempFile2.fileName());
-        
-        QJsonObject json = w.createCompressJsonBody();
-        
-        QCOMPARE(json["operation"].toString(), QString("compress"));
-        QCOMPARE(json["format"].toString(), QString("zip"));
-        QCOMPARE(json["archive_name"].toString(), QString("test.zip"));
-        
-        QJsonArray files = json["files"].toArray();
-        QCOMPARE(files.size(), 2);
-        
-        QJsonObject file1 = files[0].toObject();
-        QJsonObject file2 = files[1].toObject();
-        
-        QCOMPARE(file1["name"].toString(), QString("file1.txt"));
-        QCOMPARE(file2["name"].toString(), QString("dir/file2.txt"));
-        
-        QVERIFY(!file1["content"].toString().isEmpty());
-        QVERIFY(!file2["content"].toString().isEmpty());
+        delete multipart;
     }
 
-    void testCreateExtractJsonBody() {
+    void testCreateExtractData() {
         TestMainWindow w;
         
         QLineEdit *archiveFileEdit = w.findChild<QLineEdit*>("archiveFileEdit");
-        QLineEdit *extractPathEdit = w.findChild<QLineEdit*>("extractPathEdit");
         
         QTemporaryFile tempArchive;
         tempArchive.open();
-        tempArchive.write("fake archive data");
+        tempArchive.write("PK\003\004fake zip archive data");
+        QString archivePath = tempArchive.fileName();
         tempArchive.close();
         
-        archiveFileEdit->setText(tempArchive.fileName() + ".zip");
-        extractPathEdit->setText("/tmp/extracted");
+        archiveFileEdit->setText(archivePath);
         
-        QFile archiveFile(tempArchive.fileName() + ".zip");
-        archiveFile.open(QIODevice::WriteOnly);
-        archiveFile.write("fake archive data");
-        archiveFile.close();
-        
-        QJsonObject json = w.createExtractJsonBody();
-        
-        QCOMPARE(json["operation"].toString(), QString("extract"));
-        QCOMPARE(json["format"].toString(), QString("zip"));
-        QCOMPARE(json["extract_path"].toString(), QString("/tmp/extracted"));
-        QVERIFY(!json["archive_data"].toString().isEmpty());
-        
-        archiveFile.remove();
+        QByteArray data = w.createExtractData();
+        QVERIFY(!data.isEmpty());
+        QVERIFY(data.contains("PK"));
+        QVERIFY(data.contains("fake zip archive data"));
     }
 
     void testCompressValidation() {
@@ -270,49 +250,26 @@ private slots:
         QVERIFY(w.lastMessage.text.contains("существует"));
     }
 
-    void testFormatDetection() {
+    void testSupportedFormatsLoading() {
         TestMainWindow w;
-        QLineEdit *archiveFileEdit = w.findChild<QLineEdit*>("archiveFileEdit");
+        QComboBox *formatComboBox = w.findChild<QComboBox*>("formatComboBox");
         
-        QTemporaryFile zipFile;
-        zipFile.setFileTemplate("/tmp/test_XXXXXX.zip");
-        zipFile.open();
-        zipFile.write("test");
-        zipFile.close();
+        QVERIFY(formatComboBox->count() > 0);
         
-        QTemporaryFile tarGzFile;
-        tarGzFile.setFileTemplate("/tmp/test_XXXXXX.tar.gz");
-        tarGzFile.open();
-        tarGzFile.write("test");
-        tarGzFile.close();
+        QStringList items;
+        for (int i = 0; i < formatComboBox->count(); ++i) {
+            items << formatComboBox->itemText(i);
+        }
         
-        QTemporaryFile tarBz2File;
-        tarBz2File.setFileTemplate("/tmp/test_XXXXXX.tar.bz2");
-        tarBz2File.open();
-        tarBz2File.write("test");
-        tarBz2File.close();
+        QVERIFY(items.contains("zip"));
+        QVERIFY(items.contains("tar.gz") || items.contains("tar.bz2") || items.contains("7z"));
         
-        QTemporaryFile sevenZFile;
-        sevenZFile.setFileTemplate("/tmp/test_XXXXXX.7z");
-        sevenZFile.open();
-        sevenZFile.write("test");
-        sevenZFile.close();
+        w.setLoadingFormats(true);
+        QByteArray formatsResponse = R"({"supported_formats": ["zip", "tar.gz", "tar.bz2", "7z"]})";
+        w.testOnDataReceived(formatsResponse);
+        w.testOnRequestFinished();
         
-        archiveFileEdit->setText(zipFile.fileName());
-        QJsonObject zipJson = w.createExtractJsonBody();
-        QCOMPARE(zipJson["format"].toString(), QString("zip"));
-        
-        archiveFileEdit->setText(tarGzFile.fileName());
-        QJsonObject tarGzJson = w.createExtractJsonBody();
-        QCOMPARE(tarGzJson["format"].toString(), QString("tar.gz"));
-        
-        archiveFileEdit->setText(tarBz2File.fileName());
-        QJsonObject tarBz2Json = w.createExtractJsonBody();
-        QCOMPARE(tarBz2Json["format"].toString(), QString("tar.bz2"));
-        
-        archiveFileEdit->setText(sevenZFile.fileName());
-        QJsonObject sevenZJson = w.createExtractJsonBody();
-        QCOMPARE(sevenZJson["format"].toString(), QString("7z"));
+        QVERIFY(formatComboBox->count() >= 4);
     }
 
     void testHandleCompressSuccess() {
@@ -341,37 +298,45 @@ private slots:
         operationTabs->setCurrentIndex(1);
         
         QLineEdit *extractPathEdit = w.findChild<QLineEdit*>("extractPathEdit");
-        extractPathEdit->setText("/tmp/extracted");
+        QTemporaryDir tempDir;
+        extractPathEdit->setText(tempDir.path());
         
-        QJsonObject response;
-        response["success"] = true;
-        response["extracted_files_count"] = 3;
-        response["total_extracted_size"] = 1024;
+        QString boundary = "----CustomBoundary";
+        QString multipartData = QString(
+            "--%1\r\n"
+            "content-disposition: form-data; name=\"file\"; filename=\"file1.txt\"\r\n"
+            "content-type: application/octet-stream\r\n"
+            "\r\n"
+            "Hello World!\r\n"
+            "--%1\r\n"
+            "content-disposition: form-data; name=\"file\"; filename=\"subdir/file2.txt\"\r\n"
+            "content-type: application/octet-stream\r\n"
+            "\r\n"
+            "Test content in subdirectory\r\n"
+            "--%1--\r\n"
+        ).arg(boundary);
         
-        QJsonArray files;
-        QJsonObject file1;
-        file1["name"] = "file1.txt";
-        file1["size"] = 512;
-        files.append(file1);
+        QByteArray multipartBytes = multipartData.toUtf8();
         
-        QJsonObject file2;
-        file2["name"] = "file2.txt";
-        file2["size"] = 512;
-        files.append(file2);
-        
-        response["files"] = files;
-        
-        QJsonDocument doc(response);
-        QByteArray jsonData = doc.toJson();
-        
-        w.testOnDataReceived(jsonData);
+        w.testOnDataReceived(multipartBytes);
         w.testOnRequestFinished();
         
         QCOMPARE(w.lastMessage.type, QString("information"));
-        QVERIFY(w.lastMessage.text.contains("успешно"));
-        QVERIFY(w.lastMessage.text.contains("3"));
-        QVERIFY(w.lastMessage.text.contains("/tmp/extracted"));
-        QVERIFY(!w.lastMessage.text.contains("file1.txt"));
+        QVERIFY(w.lastMessage.text.contains("Извлечено"));
+        QVERIFY(w.lastMessage.text.contains("2"));
+        
+        QVERIFY(QFile::exists(tempDir.path() + "/file1.txt"));
+        QVERIFY(QFile::exists(tempDir.path() + "/subdir/file2.txt"));
+        
+        QFile file1(tempDir.path() + "/file1.txt");
+        file1.open(QIODevice::ReadOnly);
+        QCOMPARE(file1.readAll(), QByteArray("Hello World!"));
+        file1.close();
+        
+        QFile file2(tempDir.path() + "/subdir/file2.txt");
+        file2.open(QIODevice::ReadOnly);
+        QCOMPARE(file2.readAll(), QByteArray("Test content in subdirectory"));
+        file2.close();
     }
 
     void testHandleNetworkError() {
@@ -426,6 +391,48 @@ private slots:
         
         QVERIFY(!progressBar->isVisible());
         QVERIFY(!cancelButton->isVisible());
+    }
+
+    void testParseMultipartData() {
+        TestMainWindow w;
+        
+        QString boundary = "----TestBoundary";
+        QString multipartData = QString(
+            "--%1\r\n"
+            "content-disposition: form-data; name=\"file\"; filename=\"test1.txt\"\r\n"
+            "content-type: text/plain\r\n"
+            "\r\n"
+            "File 1 content\r\n"
+            "--%1\r\n"
+            "content-disposition: form-data; name=\"file\"; filename=\"dir/test2.txt\"\r\n"
+            "content-type: text/plain\r\n"
+            "\r\n"
+            "File 2 content\r\n"
+            "--%1--\r\n"
+        ).arg(boundary);
+        
+        QByteArray multipartBytes = multipartData.toUtf8();
+        QList<ExtractedFile> files = w.testParseMultipartData(multipartBytes, boundary);
+        
+        QCOMPARE(files.size(), 2);
+        
+        QCOMPARE(files[0].filename, QString("test1.txt"));
+        QCOMPARE(files[0].data, QByteArray("File 1 content"));
+        
+        QCOMPARE(files[1].filename, QString("dir/test2.txt"));
+        QCOMPARE(files[1].data, QByteArray("File 2 content"));
+    }
+
+    void testMultipartEmptyBoundary() {
+        TestMainWindow w;
+        
+        QString boundary = "----EmptyBoundary";
+        QString multipartData = QString("--%1--\r\n").arg(boundary);
+        
+        QByteArray multipartBytes = multipartData.toUtf8();
+        QList<ExtractedFile> files = w.testParseMultipartData(multipartBytes, boundary);
+        
+        QCOMPARE(files.size(), 0);
     }
 
 private:

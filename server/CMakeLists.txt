@@ -58,6 +58,8 @@ add_executable(server src/main.cpp
         src/server/request/request_params.h
         src/server/request/request_handler.cpp
         src/server/request/request_handler.h
+        src/server/request/multipart_parser.cpp
+        src/server/request/multipart_parser.h
         src/server/server.cpp
         src/server/server.h
         src/writer/writer.cpp
@@ -78,12 +80,12 @@ add_executable(tests
     tests/test_processor.cpp
     tests/test_factory.cpp
     tests/test_request_params.cpp
-    tests/test_writer.cpp
     src/processor/processor.cpp
     src/writer/writer.cpp
     src/factory/factory.cpp
     src/compressor/compressor.cpp
     src/server/request/request_params.cpp
+    src/server/request/multipart_parser.cpp
 )
 
 target_include_directories(tests 

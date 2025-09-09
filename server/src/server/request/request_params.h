@@ -1,23 +1,30 @@
 #pragma once
 
+#include "../../compressor/compressor.h"
 #include <string>
 #include <vector>
-#include "../../processor/processor.h"
+
+enum class ArchiveOperation;
+struct ArchiveRequest;
 
 struct ArchiveRequestParams {
-    std::string operation;      
-    std::string format;         
-    std::string archive_name;   
-    
-    std::vector<std::string> file_names;     
-    std::vector<std::string> file_contents;  
-    
-    std::string archive_data_base64;  
-    std::string extract_path;         
-    
-    ArchiveRequestParams() : operation("compress"), format("zip"), archive_name("archive.zip") {}
-    
-    ArchiveRequest toArchiveRequest() const;
+  std::string operation;
+  std::string format;
+  std::string archive_name;
+
+  std::vector<FileEntry> files;
+
+  std::vector<uint8_t> archive_data;
+  std::string extract_path;
+
+  ArchiveRequestParams()
+      : operation("compress"), format("zip"), archive_name("archive.zip") {}
+
+  ArchiveRequest toArchiveRequest() const;
 };
 
-ArchiveRequestParams parse_json_body(const std::string& body);
+struct MultipartFormData;
+
+ArchiveRequestParams parse_multipart_body(const std::string &body,
+                                          const std::string &boundary);
+ArchiveRequestParams parse_archive_upload(const std::string &body);

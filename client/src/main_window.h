@@ -17,8 +17,14 @@
 #include <QRadioButton>
 #include <QTabWidget>
 #include <QAbstractItemView>
+#include <QHttpMultiPart>
 
 class QNetworkRequest;
+
+struct ExtractedFile {
+    QString filename;
+    QByteArray data;
+};
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -26,8 +32,8 @@ class MainWindow : public QMainWindow {
 public:
     MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
-    QJsonObject createCompressJsonBody() const;
-    QJsonObject createExtractJsonBody() const;
+    QHttpMultiPart* createCompressMultipart() const;
+    QByteArray createExtractData() const;
 
 protected:
     virtual QString getSaveFileName(const QString& caption, const QString& dir, const QString& filter) {
@@ -53,6 +59,7 @@ protected:
 
     signals:
         void sendNetworkRequest(const QNetworkRequest &request, const QByteArray &data);
+        void sendMultipartRequest(const QNetworkRequest &request, QHttpMultiPart *multipart);
     void cancelNetworkRequest();
 
     private slots:
@@ -66,6 +73,10 @@ protected:
     void onOperationTabChanged(int index);
     void loadSupportedFormats();
     void onFormatsReceived(const QByteArray &data);
+    void handleMultipartExtractResponse(const QByteArray &data, const QString &boundary);
+
+protected:
+    QList<ExtractedFile> parseMultipartData(const QByteArray &data, const QString &boundary);
 
 private:
     QTabWidget *operationTabs;
@@ -94,7 +105,6 @@ private:
     void setupUi();
     void setupCompressTab();
     void setupExtractTab();
-    QString encodeFileToBase64(const QString& filePath) const;
     void addFilesToList(const QStringList& files);
     void addDirectoryToList(const QString& directory);
 };

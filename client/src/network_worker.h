@@ -4,6 +4,7 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QScopedPointer>
+#include <QHttpMultiPart>
 
 class NetworkWorker : public QObject {
     Q_OBJECT
@@ -14,6 +15,7 @@ public:
 
     public slots:
         void processRequest(const QNetworkRequest &request, const QByteArray &data = QByteArray());
+        void processMultipartRequest(const QNetworkRequest &request, QHttpMultiPart *multipart);
     void cancelRequest();
 
     signals:
@@ -28,4 +30,5 @@ public:
 private:
     QScopedPointer<QNetworkAccessManager, QScopedPointerDeleter<QNetworkAccessManager>> m_qnam;
     QScopedPointer<QNetworkReply, QScopedPointerDeleter<QNetworkReply>> m_reply;
+    QHttpMultiPart *m_currentMultipart;
 };

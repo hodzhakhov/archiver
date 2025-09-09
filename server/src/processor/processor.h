@@ -35,8 +35,6 @@ public:
   ArchiveOperation getOperation() const { return request_.operation; }
 
   size_t getInputFilesCount() const { return request_.files.size(); }
-  size_t getOutputSize() const;
-  double getCompressionRatio() const;
 
 private:
   ArchiveRequest request_;
@@ -49,5 +47,4 @@ private:
   void validateRequest();
   void performCompression();
   void performExtraction();
-  size_t calculateInputSize() const;
 };

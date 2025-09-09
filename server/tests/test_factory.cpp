@@ -79,3 +79,23 @@ TEST_F(CompressorFactoryTest, IsFormatSupported) {
     EXPECT_FALSE(CompressorFactory::isFormatSupported(""));
     EXPECT_FALSE(CompressorFactory::isFormatSupported("pdf"));
 }
+
+TEST_F(CompressorFactoryTest, DetectFormatFromData) {
+    std::vector<uint8_t> zip_data = {0x50, 0x4B, 0x03, 0x04, 0x01, 0x02};
+    EXPECT_EQ(CompressorFactory::detectFormatFromData(zip_data), CompressionFormat::ZIP);
+    
+    std::vector<uint8_t> gzip_data = {0x1F, 0x8B, 0x08, 0x00, 0x01, 0x02};
+    EXPECT_EQ(CompressorFactory::detectFormatFromData(gzip_data), CompressionFormat::TAR_GZ);
+    
+    std::vector<uint8_t> bzip2_data = {0x42, 0x5A, 0x68, 0x39, 0x01, 0x02};
+    EXPECT_EQ(CompressorFactory::detectFormatFromData(bzip2_data), CompressionFormat::TAR_BZ2);
+    
+    std::vector<uint8_t> sevenz_data = {0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C, 0x01, 0x02};
+    EXPECT_EQ(CompressorFactory::detectFormatFromData(sevenz_data), CompressionFormat::SEVEN_Z);
+    
+    std::vector<uint8_t> unknown_data = {0x55, 0x4E, 0x4B, 0x4E, 0x01, 0x02};
+    EXPECT_EQ(CompressorFactory::detectFormatFromData(unknown_data), CompressionFormat::ZIP);
+    
+    std::vector<uint8_t> small_data = {0x50, 0x4B};
+    EXPECT_THROW(CompressorFactory::detectFormatFromData(small_data), std::runtime_error);
+}
